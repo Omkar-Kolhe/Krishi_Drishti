@@ -309,12 +309,7 @@ const TopBar = ({ selectedCommodity = 'onion', onCommodityChange, dashboardData 
           {today}
         </div>
 
-        <div className="relative">
-          <Bell className="text-gray-500 cursor-pointer hover:text-gray-800 transition" size={20} />
-          <span className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
-            3
-          </span>
-        </div>
+
 
         <button 
           onClick={handleDownloadReport}

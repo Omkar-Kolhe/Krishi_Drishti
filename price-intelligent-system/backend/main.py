@@ -561,6 +561,17 @@ def get_dashboard_data(commodity: str = Query("onion")):
         abs(risk["arrivalPressure"]) * 0.5 + (recent_std / current_price * 100) * 0.5, 2
     ) if current_price else 0
 
+    # ---- Model reliability metrics ----
+    metrics = _MODEL_METRICS.get(commodity, {})
+    mape7 = metrics.get("7d", 15.0)
+    mape14 = metrics.get("14d", 15.0)
+    mape30 = metrics.get("30d", 15.0)
+
+    def get_conf(m):
+        if m < 30: return "HIGH"
+        elif m <= 50: return "MEDIUM"
+        else: return "LOW"
+
     # ---- Final response ----
     return {
         # System metadata
@@ -619,16 +630,6 @@ def get_dashboard_data(commodity: str = Query("onion")):
         "shapDrivers": shap_drivers,
 
         # Model reliability
-        metrics = _MODEL_METRICS.get(commodity, {})
-        mape7 = metrics.get("7d", 15.0)
-        mape14 = metrics.get("14d", 15.0)
-        mape30 = metrics.get("30d", 15.0)
-
-        def get_conf(m):
-            if m < 30: return "HIGH"
-            elif m <= 50: return "MEDIUM"
-            else: return "LOW"
-
         "modelErrors": {
             "mape7":           mape7,
             "mape14":          mape14,

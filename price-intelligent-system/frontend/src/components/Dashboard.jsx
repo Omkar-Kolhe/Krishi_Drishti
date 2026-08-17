@@ -21,17 +21,17 @@ const FALLBACK = {
       riskLevel: 'LOW', alertStatus: 'NORMAL', decisionPriority: 'LOW',
     },
     historicalData: [
-      { date: '03 Nov', price: 4300, modelBacktest: 4050, forecast: null },
-      { date: '17 Nov', price: 3800, modelBacktest: 3680, forecast: null },
-      { date: '01 Dec', price: 3300, modelBacktest: 3150, forecast: null },
-      { date: '15 Dec', price: 2900, modelBacktest: 2780, forecast: null },
-      { date: '31 Dec', price: 2650, modelBacktest: 2520, forecast: null },
+      { date: '03 Nov', price: 4300, forecast: null },
+      { date: '17 Nov', price: 3800, forecast: null },
+      { date: '01 Dec', price: 3300, forecast: null },
+      { date: '15 Dec', price: 2900, forecast: null },
+      { date: '31 Dec', price: 2650, forecast: null },
     ],
     forecastData: [
-      { date: '31 Dec', price: null, modelBacktest: null, forecast: 2650 },
-      { date: '07 Jan', price: null, modelBacktest: null, forecast: 2051 },
-      { date: '14 Jan', price: null, modelBacktest: null, forecast: 2106 },
-      { date: '30 Jan', price: null, modelBacktest: null, forecast: 2250 },
+      { date: '31 Dec', price: null, forecast: 2650 },
+      { date: '07 Jan', price: null, forecast: 2051 },
+      { date: '14 Jan', price: null, forecast: 2106 },
+      { date: '30 Jan', price: null, forecast: 2250 },
     ],
     riskData: { score: 19.27, level: 'LOW', earlyWarning: false, drivers: ['Elevated Historical Volatility (daily std dev: 7.83%)', 'Recent supply influx moderating prices'] },
     shapDrivers: [
@@ -290,7 +290,6 @@ const Dashboard = ({ data, selectedCommodity = 'onion' }) => {
             <h3 className="font-bold text-gray-800">Wholesale Price — Historical Trend & AI Forecast</h3>
             <div className="flex gap-5 flex-wrap">
               <Legend color="#3b82f6" label="Actual Historical Price" />
-              <Legend color="#16a34a" label="Model Backtest (Validation)" dashed />
               <Legend color="#ef4444" label="AI Forecast (Future)" dashed />
             </div>
           </div>
@@ -303,8 +302,6 @@ const Dashboard = ({ data, selectedCommodity = 'onion' }) => {
                 <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0,0,0,.1)', fontWeight: 600 }} formatter={(v) => [formatINR(v)]} />
                 {/* Actual historical price — solid blue */}
                 <Line type="monotone" dataKey="price" name="Actual Price" stroke="#3b82f6" strokeWidth={3} dot={false} activeDot={{ r: 6, fill: '#3b82f6' }} connectNulls />
-                {/* Model backtest — dashed green (what model predicted in-sample) */}
-                <Line type="monotone" dataKey="modelBacktest" name="Model Backtest" stroke="#16a34a" strokeWidth={2} strokeDasharray="4 3" dot={false} activeDot={{ r: 5, fill: '#16a34a' }} connectNulls />
                 {/* Future forecast — dashed red */}
                 <Line type="monotone" dataKey="forecast" name="Forecast" stroke="#ef4444" strokeWidth={3} strokeDasharray="6 3" dot={{ r: 5, fill: '#fff', stroke: '#ef4444', strokeWidth: 2 }} activeDot={{ r: 7, fill: '#ef4444' }} connectNulls />
               </ComposedChart>
