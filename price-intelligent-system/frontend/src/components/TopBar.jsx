@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { Calendar, ChevronDown, Download, MapPin, Bell } from 'lucide-react';
+import { Calendar, ChevronDown, Download, MapPin } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -8,7 +8,6 @@ const COMMODITIES = [
   { key: 'potato', label: 'Potato',   emoji: '🥔', market: 'Achalda',    state: 'Uttar Pradesh', marketType: 'APMC Wholesale' },
   { key: 'turdal', label: 'Tur Dal',  emoji: '🫘', market: 'Latur',      state: 'Maharashtra',   marketType: 'APMC Wholesale' },
 ];
-const FORECAST_HORIZONS = ['7 Days (Short-term)', '14 Days (Medium-term)', '30 Days (Long-term)'];
 
 const TopBar = ({ selectedCommodity = 'onion', onCommodityChange, dashboardData }) => {
   const activeCommodity = COMMODITIES.find(c => c.key === selectedCommodity) || COMMODITIES[0];
@@ -289,14 +288,6 @@ const TopBar = ({ selectedCommodity = 'onion', onCommodityChange, dashboardData 
           <div className="text-sm font-semibold text-emerald-800">
             {activeCommodity.market} APMC
             <span className="text-xs text-emerald-600 ml-1.5">· {activeCommodity.state}</span>
-          </div>
-        </div>
-
-        {/* Market Type */}
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-gray-400 font-bold uppercase tracking-wider">Market Type</span>
-          <div className="border border-gray-200 rounded-md px-3 py-1.5 text-sm font-semibold bg-gray-50 text-gray-700">
-            {activeCommodity.marketType}
           </div>
         </div>
 

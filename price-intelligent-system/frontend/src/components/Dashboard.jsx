@@ -233,7 +233,7 @@ const Dashboard = ({ data, selectedCommodity = 'onion' }) => {
       <div>
         <h1 className="text-3xl font-black text-gray-900 tracking-tight leading-tight">National Price Intelligence & DSS</h1>
         <p className="text-sm font-semibold text-[#0A3A2A] mt-1">AI-Enabled Commodity Price Forecasting & Government Decision Support</p>
-        <p className="text-xs text-gray-400 mt-0.5 font-medium">Government of India — Department of Consumer Affairs &nbsp;|&nbsp; Market: {d.systemStatus?.market} ({d.systemStatus?.state})</p>
+        <p className="text-xs text-gray-400 mt-0.5 font-medium">Government of India — Department of Consumer Affairs</p>
       </div>
 
       {/* ══════════════════════════════════════════════════════════════════════
@@ -569,7 +569,7 @@ const Dashboard = ({ data, selectedCommodity = 'onion' }) => {
       ══════════════════════════════════════════════════════════════════════ */}
       <Section title="Model Performance & Accuracy">
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          <div className="grid grid-cols-1 gap-8">
             {/* Left: Accuracy metrics */}
             <div>
               <h4 className="font-bold text-gray-900 text-sm mb-4">Forecast Accuracy by Horizon</h4>
@@ -587,28 +587,6 @@ const Dashboard = ({ data, selectedCommodity = 'onion' }) => {
                   "This forecast has moderate historical error and should be interpreted with caution." : 
                   "While historical validation error is low, no forecast is guaranteed to be perfectly accurate."}
               </div>
-            </div>
-
-            {/* Right: Feature importance */}
-            <div>
-              <h4 className="font-bold text-gray-900 text-sm mb-4">Key Factors Influencing Price Predictions</h4>
-              <div className="h-40">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart layout="vertical" data={d.priceDrivers} margin={{ top: 0, right: 20, left: 0, bottom: 0 }} barSize={12}>
-                    <XAxis type="number" hide />
-                    <YAxis dataKey="name" type="category" width={120} tick={{ fontSize: 10, fill: '#4b5563', fontWeight: 600 }} axisLine={false} tickLine={false} />
-                    <Tooltip cursor={{ fill: '#f9fafb' }} contentStyle={{ borderRadius: '8px', border: 'none', fontSize: 11, fontWeight: 600, boxShadow: '0 2px 4px rgba(0,0,0,.1)' }} formatter={(v) => [`${v}%`, 'Importance']} />
-                    <Bar dataKey="value" radius={[0, 4, 4, 0]}>
-                      {(d.priceDrivers || []).map((_, i) => (
-                        <Cell key={i} fill={i === 0 ? '#0A3A2A' : '#22c55e'} opacity={1 - i * 0.14} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-              <p className="text-[11px] text-gray-500 font-medium mt-3 leading-relaxed">
-                This chart shows how much importance the AI model places on each factor when making price predictions. Higher values = stronger influence.
-              </p>
             </div>
           </div>
         </div>
