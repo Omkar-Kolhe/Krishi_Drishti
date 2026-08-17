@@ -156,13 +156,42 @@ const PRIORITY_EXPLANATIONS = {
 const RISK_SCORE_EXPLANATION = 'Composite score (0–100) computed from: forecast price change (weighted 1.5×), historical price volatility (weighted 0.8×), and market arrival deviation from 30-day average (weighted 0.3×). Score ≥ 40 triggers an early warning.';
 
 // ─── MAIN COMPONENT ──────────────────────────────────────────────────────────
-const Dashboard = ({ data, selectedCommodity = 'onion' }) => {
+const Dashboard = ({ data, selectedCommodity = 'onion', onActiveSectionChange }) => {
   const [simParams, setSimParams] = useState({ arrivals: 0, diesel: 0, rain: 0 });
   const [simResult, setSimResult] = useState(null);
   const [simLoading, setSimLoading] = useState(false);
   const [simError, setSimError] = useState(null);
   const [hasInitializedSim, setHasInitializedSim] = useState(false);
   const [selectedHorizon, setSelectedHorizon] = useState('30d');
+
+  useEffect(() => {
+    if (!onActiveSectionChange) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visibleEntries = entries.filter((entry) => entry.isIntersecting);
+        if (visibleEntries.length > 0) {
+          const mostVisible = visibleEntries.reduce((prev, current) => 
+            (prev.intersectionRatio > current.intersectionRatio) ? prev : current
+          );
+          onActiveSectionChange(mostVisible.target.id);
+        }
+      },
+      {
+        root: null,
+        rootMargin: '-100px 0px -40% 0px',
+        threshold: [0, 0.25, 0.5, 0.75, 1],
+      }
+    );
+
+    const sectionIds = ['overview', 'price-intelligence', 'risk-warning', 'forecast-explainability', 'model-accuracy', 'decision-support'];
+    sectionIds.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) observer.observe(el);
+    });
+
+    return () => observer.disconnect();
+  }, [onActiveSectionChange, data, selectedCommodity]);
 
   // Merge live API data over the appropriate fallback (so offline mode is per-commodity)
   const fallback = FALLBACK[selectedCommodity] || FALLBACK.onion;
@@ -230,7 +259,7 @@ const Dashboard = ({ data, selectedCommodity = 'onion' }) => {
     <div className="p-6 max-w-[1600px] mx-auto space-y-8">
 
       {/* ── HEADER ── */}
-      <div>
+      <div id="overview" className="scroll-mt-24">
         <h1 className="text-3xl font-black text-gray-900 tracking-tight leading-tight">National Price Intelligence & DSS</h1>
         <p className="text-sm font-semibold text-[#0A3A2A] mt-1">AI-Enabled Commodity Price Forecasting & Government Decision Support</p>
         <p className="text-xs text-gray-400 mt-0.5 font-medium">Government of India — Department of Consumer Affairs</p>
@@ -284,7 +313,7 @@ const Dashboard = ({ data, selectedCommodity = 'onion' }) => {
       {/* ══════════════════════════════════════════════════════════════════════
           3. PRICE TRAJECTORY CHART
       ══════════════════════════════════════════════════════════════════════ */}
-      <Section title="Price Trajectory & Forecast Visualization">
+      <Section id="price-intelligence" title="Price Trajectory & Forecast Visualization">
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
           <div className="flex justify-between items-center mb-6 flex-wrap gap-3">
             <h3 className="font-bold text-gray-800">Wholesale Price — Historical Trend & AI Forecast</h3>
@@ -322,7 +351,7 @@ const Dashboard = ({ data, selectedCommodity = 'onion' }) => {
       ══════════════════════════════════════════════════════════════════════ */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* 4. Risk & Early Warning */}
-        <div>
+        <div id="risk-warning" className="scroll-mt-24">
           <SectionTitle title="Risk Assessment & Early Warning" />
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 h-full">
             <div className={`p-5 rounded-xl mb-5 border ${riskBg[rl]}`}>
@@ -360,7 +389,7 @@ const Dashboard = ({ data, selectedCommodity = 'onion' }) => {
         </div>
 
         {/* 5. What's Driving This Forecast (renamed from SHAP) */}
-        <div>
+        <div id="forecast-explainability" className="scroll-mt-24">
           <SectionTitle title="What's Driving This Forecast?" />
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 h-full flex flex-col">
             <div className="bg-amber-50 border border-amber-100 rounded-lg p-3 mb-5 flex items-start gap-2">
@@ -483,7 +512,7 @@ const Dashboard = ({ data, selectedCommodity = 'onion' }) => {
       {/* ══════════════════════════════════════════════════════════════════════
           6. GOVERNMENT DECISION SUPPORT
       ══════════════════════════════════════════════════════════════════════ */}
-      <Section title="Government Decision Support">
+      <Section id="decision-support" title="Government Decision Support">
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
           <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-3 mb-6 flex items-start gap-2">
             <Info size={14} className="text-indigo-500 flex-shrink-0 mt-0.5" />
@@ -567,7 +596,7 @@ const Dashboard = ({ data, selectedCommodity = 'onion' }) => {
       {/* ══════════════════════════════════════════════════════════════════════
           7. MODEL ACCURACY & FEATURE IMPORTANCE
       ══════════════════════════════════════════════════════════════════════ */}
-      <Section title="Model Performance & Accuracy">
+      <Section id="model-accuracy" title="Model Performance & Accuracy">
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
           <div className="grid grid-cols-1 gap-8">
             {/* Left: Accuracy metrics */}
@@ -604,8 +633,8 @@ const Dashboard = ({ data, selectedCommodity = 'onion' }) => {
 };
 
 // ─── SUB-COMPONENTS ───────────────────────────────────────────────────────────
-const Section = ({ title, children }) => (
-  <div>
+const Section = ({ id, title, children }) => (
+  <div id={id} className="scroll-mt-24">
     <SectionTitle title={title} />
     {children}
   </div>

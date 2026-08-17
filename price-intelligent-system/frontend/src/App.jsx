@@ -9,6 +9,15 @@ function App() {
   const [selectedCommodity, setSelectedCommodity] = useState('onion');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [activeSection, setActiveSection] = useState('overview');
+
+  const handleNavigate = (sectionId) => {
+    setActiveSection(sectionId);
+    const element = document.getElementById(sectionId);
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
 
   useEffect(() => {
     const loadData = async () => {
@@ -34,7 +43,7 @@ function App() {
 
   return (
     <div className="flex min-h-screen bg-krishi-bg font-sans">
-      <Sidebar />
+      <Sidebar activeSection={activeSection} onNavigate={handleNavigate} />
       <div className="flex-1 ml-64 flex flex-col h-screen overflow-hidden">
         <TopBar selectedCommodity={selectedCommodity} onCommodityChange={setSelectedCommodity} dashboardData={dashboardData} />
         <main className="flex-1 overflow-y-auto">
@@ -51,7 +60,7 @@ function App() {
                   <span className="opacity-75">{error}</span>
                 </div>
               )}
-              <Dashboard data={dashboardData || {}} selectedCommodity={selectedCommodity} />
+              <Dashboard data={dashboardData || {}} selectedCommodity={selectedCommodity} onActiveSectionChange={setActiveSection} />
             </>
           )}
         </main>

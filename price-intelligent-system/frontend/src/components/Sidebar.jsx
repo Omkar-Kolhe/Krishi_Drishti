@@ -2,33 +2,40 @@ import React from 'react';
 import { Home, BarChart2, Activity, Cpu, ShieldCheck, Leaf, FileText } from 'lucide-react';
 
 const NAV_ITEMS = [
-  { icon: <Home size={18} />,          label: 'Overview',              active: true,  section: 'dashboard' },
-  { icon: <BarChart2 size={18} />,     label: 'Price Intelligence',    active: false, section: 'dashboard' },
-  { icon: <Activity size={18} className="text-red-400" />, label: 'Risk & Early Warning', active: false, section: 'dashboard' },
-  { icon: <Cpu size={18} />,           label: 'Forecast Explainability', active: false, section: 'dashboard' },
-  { icon: <ShieldCheck size={18} />,   label: 'Model Accuracy',        active: false, section: 'tools' },
-  { icon: <FileText size={18} />,      label: 'Decision Support',      active: false, section: 'tools' },
+  { icon: <Home size={18} />,          label: 'Overview',              id: 'overview',              section: 'dashboard' },
+  { icon: <BarChart2 size={18} />,     label: 'Price Intelligence',    id: 'price-intelligence',    section: 'dashboard' },
+  { icon: <Activity size={18} className="text-red-400" />, label: 'Risk & Early Warning', id: 'risk-warning', section: 'dashboard' },
+  { icon: <Cpu size={18} />,           label: 'Forecast Explainability', id: 'forecast-explainability', section: 'dashboard' },
+  { icon: <ShieldCheck size={18} />,   label: 'Model Accuracy',        id: 'model-accuracy',        section: 'tools' },
+  { icon: <FileText size={18} />,      label: 'Decision Support',      id: 'decision-support',      section: 'tools' },
 ];
 
-const Sidebar = () => {
+const Sidebar = ({ activeSection, onNavigate }) => {
   const dashboardItems = NAV_ITEMS.filter(i => i.section === 'dashboard');
   const toolItems      = NAV_ITEMS.filter(i => i.section === 'tools');
 
-  const renderItem = (item, index) => (
-    <li key={index}>
-      <a
-        href="#"
-        className={`flex items-center gap-3 px-6 py-3 text-sm transition-all duration-150 ${
-          item.active
-            ? 'bg-green-700/60 border-l-4 border-green-400 font-semibold text-white'
-            : 'hover:bg-white/10 text-gray-300 hover:text-white border-l-4 border-transparent'
-        }`}
-      >
-        <span className="flex-shrink-0">{item.icon}</span>
-        {item.label}
-      </a>
-    </li>
-  );
+  const renderItem = (item, index) => {
+    const isActive = activeSection === item.id;
+    return (
+      <li key={index}>
+        <a
+          href={`#${item.id}`}
+          onClick={(e) => {
+            e.preventDefault();
+            if (onNavigate) onNavigate(item.id);
+          }}
+          className={`flex items-center gap-3 px-6 py-3 text-sm transition-all duration-150 ${
+            isActive
+              ? 'bg-green-700/60 border-l-4 border-green-400 font-semibold text-white'
+              : 'hover:bg-white/10 text-gray-300 hover:text-white border-l-4 border-transparent'
+          }`}
+        >
+          <span className="flex-shrink-0">{item.icon}</span>
+          {item.label}
+        </a>
+      </li>
+    );
+  };
 
   return (
     <aside className="w-64 bg-krishi-dark text-white flex flex-col h-screen fixed left-0 top-0 overflow-y-auto z-20">
