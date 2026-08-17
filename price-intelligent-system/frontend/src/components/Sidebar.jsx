@@ -1,14 +1,13 @@
 import React from 'react';
-import { Home, BarChart2, Activity, Map, Cpu, FlaskConical, ShieldCheck, Leaf } from 'lucide-react';
+import { Home, BarChart2, Activity, Cpu, ShieldCheck, Leaf, FileText } from 'lucide-react';
 
 const NAV_ITEMS = [
-  { icon: <Home size={18} />,          label: 'Overview',          active: true,  section: 'dashboard' },
-  { icon: <BarChart2 size={18} />,     label: 'Price Intelligence', active: false, section: 'dashboard' },
-  { icon: <Activity size={18} className="text-red-400" />, label: 'Risk & Alerts', active: false, section: 'dashboard' },
-  { icon: <Map size={18} />,           label: 'Market Intelligence',active: false, section: 'dashboard' },
-  { icon: <Cpu size={18} />,           label: 'Explainable AI',    active: false, section: 'dashboard' },
-  { icon: <FlaskConical size={18} />,  label: 'Policy Sandbox',    active: false, section: 'tools' },
-  { icon: <ShieldCheck size={18} />,   label: 'Model Reliability', active: false, section: 'tools' },
+  { icon: <Home size={18} />,          label: 'Overview',              active: true,  section: 'dashboard' },
+  { icon: <BarChart2 size={18} />,     label: 'Price Intelligence',    active: false, section: 'dashboard' },
+  { icon: <Activity size={18} className="text-red-400" />, label: 'Risk & Early Warning', active: false, section: 'dashboard' },
+  { icon: <Cpu size={18} />,           label: 'Forecast Explainability', active: false, section: 'dashboard' },
+  { icon: <ShieldCheck size={18} />,   label: 'Model Accuracy',        active: false, section: 'tools' },
+  { icon: <FileText size={18} />,      label: 'Decision Support',      active: false, section: 'tools' },
 ];
 
 const Sidebar = () => {
@@ -49,30 +48,18 @@ const Sidebar = () => {
           {dashboardItems.map(renderItem)}
         </ul>
 
-        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-6 mb-2">Tools</p>
+        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-6 mb-2">Analytics</p>
         <ul className="space-y-0.5">
           {toolItems.map(renderItem)}
         </ul>
       </nav>
 
-      {/* System Status */}
+      {/* Powered By footer (replacing System Status) */}
       <div className="p-5 border-t border-white/10">
-        <h3 className="text-[10px] font-bold text-gray-500 mb-3 tracking-widest uppercase">System Status</h3>
-        <div className="space-y-3 text-xs text-gray-300">
-          {[
-            { label: 'All Models Operational', sub: 'XGBoost v2.1' },
-            { label: 'Forecast Engine',         sub: 'Active — 3 commodities' },
-            { label: 'Data Pipeline',            sub: 'AGMARKNET · Live' },
-          ].map((s, i) => (
-            <div key={i} className="flex items-start gap-2">
-              <div className="w-2 h-2 rounded-full bg-green-400 mt-1 flex-shrink-0 animate-pulse" />
-              <div>
-                <p className="font-semibold text-white text-[11px]">{s.label}</p>
-                <p className="text-gray-400 mt-0.5 text-[10px]">{s.sub}</p>
-              </div>
-            </div>
-          ))}
-        </div>
+        <p className="text-[10px] text-gray-500 font-medium leading-relaxed">
+          Powered by XGBoost Multi-Horizon Forecasting
+          <br />Data Source: AGMARKNET & OpenMeteo
+        </p>
       </div>
     </aside>
   );

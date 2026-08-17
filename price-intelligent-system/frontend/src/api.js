@@ -15,3 +15,20 @@ export const fetchDashboardData = async (commodity = 'onion') => {
     throw error;
   }
 };
+
+export const simulateForecast = async (payload) => {
+  try {
+    const response = await fetch(`http://localhost:8000/api/simulate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!response.ok) {
+      throw new Error('Simulation request failed');
+    }
+    return await response.json();
+  } catch (error) {
+    console.error("Error calling simulation API:", error);
+    throw error;
+  }
+};

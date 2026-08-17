@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   TrendingUp, TrendingDown, AlertTriangle, ShieldCheck,
-  MoveRight, BarChart2, Cpu, CheckCircle, Sliders, Server
+  MoveRight, BarChart2, Cpu, CheckCircle, Info, ArrowUpRight, ArrowDownRight, Minus, Settings2
 } from 'lucide-react';
+import { simulateForecast } from '../api';
 import {
   ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, BarChart, Bar, Cell
@@ -45,7 +46,6 @@ const FALLBACK = {
       actions:    ['Continue routine market monitoring.', 'Verify retail price margins nationally.'],
       checklists: ['Update weekly market status report.', 'Monitor for early-warning threshold breaches.'],
     },
-    sandboxDefaults: { arrivals: 4386, diesel: 94.27, rain: 0.0, arrivalsMin: 1000, arrivalsMax: 13000, baseForecast7d: 2051.16 },
     priceDrivers: [
       { name: 'Price Momentum', value: 35 }, { name: 'Market Arrivals', value: 22 },
       { name: 'Seasonality', value: 18 },    { name: 'Weather Factors', value: 12 },
@@ -84,7 +84,6 @@ const FALLBACK = {
       actions:    ['Prepare buffer stock release plan.', 'Monitor market arrivals daily.'],
       checklists: ['Confirm arrival data from AGMARKNET.', 'Check seasonal demand patterns.'],
     },
-    sandboxDefaults: { arrivals: 3200, diesel: 94.27, rain: 5.0, arrivalsMin: 800, arrivalsMax: 9600, baseForecast7d: 1350 },
     priceDrivers: [
       { name: 'Price Momentum', value: 30 }, { name: 'Seasonality', value: 25 },
       { name: 'Market Arrivals', value: 20 }, { name: 'Weather', value: 15 }, { name: 'Other', value: 10 },
@@ -122,7 +121,6 @@ const FALLBACK = {
       actions:    ['Continue routine market monitoring.', 'Update procurement targets for Q1.'],
       checklists: ['Monitor crop status in Latur and Bidar districts.', 'Verify import pipeline from Myanmar.'],
     },
-    sandboxDefaults: { arrivals: 1800, diesel: 94.27, rain: 0.0, arrivalsMin: 500, arrivalsMax: 5400, baseForecast7d: 8350 },
     priceDrivers: [
       { name: 'Rolling Mean', value: 40 }, { name: 'Price Momentum', value: 28 },
       { name: 'Arrivals', value: 18 }, { name: 'Seasonality', value: 9 }, { name: 'Weather', value: 5 },
@@ -142,13 +140,30 @@ const pctBadge  = (pct) => {
     </span>
   );
 };
-const riskColors = { LOW: 'green', MEDIUM: 'yellow', HIGH: 'orange', URGENT: 'red' };
 const riskBg     = { LOW: 'bg-green-50 border-green-100', MEDIUM: 'bg-yellow-50 border-yellow-100', HIGH: 'bg-orange-50 border-orange-100', URGENT: 'bg-red-50 border-red-100' };
 const riskText   = { LOW: 'text-green-800', MEDIUM: 'text-yellow-800', HIGH: 'text-orange-800', URGENT: 'text-red-800' };
 const riskBadge  = { LOW: 'bg-green-200 text-green-900 border-green-300', MEDIUM: 'bg-yellow-200 text-yellow-900 border-yellow-300', HIGH: 'bg-orange-200 text-orange-900 border-orange-300', URGENT: 'bg-red-200 text-red-900 border-red-300' };
 
+// Decision Priority explanations
+const PRIORITY_EXPLANATIONS = {
+  LOW:    'No immediate action required. Markets are operating within normal bounds. Continue routine monitoring.',
+  MEDIUM: 'Situation requires closer monitoring. Early signs of price movement detected. Prepare contingency plans.',
+  HIGH:   'Significant price movement expected. Initiate preparatory actions for buffer stock management and market intervention.',
+  URGENT: 'Critical threshold breached. Immediate policy intervention likely needed — buffer stock release, import facilitation, or market advisory.',
+};
+
+// Risk score explanation
+const RISK_SCORE_EXPLANATION = 'Composite score (0–100) computed from: forecast price change (weighted 1.5×), historical price volatility (weighted 0.8×), and market arrival deviation from 30-day average (weighted 0.3×). Score ≥ 40 triggers an early warning.';
+
 // ─── MAIN COMPONENT ──────────────────────────────────────────────────────────
 const Dashboard = ({ data, selectedCommodity = 'onion' }) => {
+  const [simParams, setSimParams] = useState({ arrivals: 0, diesel: 0, rain: 0 });
+  const [simResult, setSimResult] = useState(null);
+  const [simLoading, setSimLoading] = useState(false);
+  const [simError, setSimError] = useState(null);
+  const [hasInitializedSim, setHasInitializedSim] = useState(false);
+  const [selectedHorizon, setSelectedHorizon] = useState('30d');
+
   // Merge live API data over the appropriate fallback (so offline mode is per-commodity)
   const fallback = FALLBACK[selectedCommodity] || FALLBACK.onion;
   const d = {
@@ -160,27 +175,54 @@ const Dashboard = ({ data, selectedCommodity = 'onion' }) => {
     shapDrivers:     data?.shapDrivers     || fallback.shapDrivers,
     modelErrors:     data?.modelErrors     || fallback.modelErrors,
     decisionSupport: data?.decisionSupport || fallback.decisionSupport,
-    sandboxDefaults: data?.sandboxDefaults || fallback.sandboxDefaults,
     priceDrivers:    data?.priceDrivers    || fallback.priceDrivers,
+    sandboxDefaults: data?.sandboxDefaults || { arrivals: 1000, diesel: 90, rain: 0, arrivalsMin: 100, arrivalsMax: 3000, baseForecast7d: 2000 },
     footerData:      data?.footerData      || fallback.footerData,
   };
 
-  const [sandbox, setSandbox] = useState(d.sandboxDefaults);
-
-  // Simple client-side simulation: linear perturbation of baseForecast
-  const base = d.sandboxDefaults.baseForecast7d || d.kpiMetrics.forecast7Day?.value || 0;
-  const simPrice = Math.max(0,
-    base
-    - ((sandbox.arrivals - d.sandboxDefaults.arrivals) * 0.04)
-    + ((sandbox.diesel   - d.sandboxDefaults.diesel)   * 3.5)
-    - (sandbox.rain * 2.0)
-  );
-  const simImpact = base - simPrice;
-  const simPct    = d.kpiMetrics.currentPrice?.value
-    ? ((simPrice - d.kpiMetrics.currentPrice.value) / d.kpiMetrics.currentPrice.value * 100)
-    : 0;
-
   const rl = d.riskData?.level || 'LOW';
+  const pct7 = d.kpiMetrics.forecast7Day?.changePct || 0;
+
+  useEffect(() => {
+    if (d.sandboxDefaults) {
+      setSimParams({
+        arrivals: d.sandboxDefaults.arrivals,
+        diesel: d.sandboxDefaults.diesel,
+        rain: d.sandboxDefaults.rain,
+      });
+      setSimResult(null);
+      setSimError(null);
+      setHasInitializedSim(true);
+    }
+  }, [d.sandboxDefaults, selectedCommodity]);
+
+  const handleSimulate = async () => {
+    setSimLoading(true);
+    setSimError(null);
+    try {
+      const res = await simulateForecast({
+        commodity: selectedCommodity,
+        arrivals: simParams.arrivals,
+        diesel: simParams.diesel,
+        rain: simParams.rain,
+      });
+      if (res.error) throw new Error(res.error);
+      setSimResult(res);
+    } catch (err) {
+      setSimError(err.message || 'Simulation failed');
+    } finally {
+      setSimLoading(false);
+    }
+  };
+
+  // Determine trend outlook
+  const trendDirection = pct7 > 2 ? 'RISING' : pct7 < -2 ? 'FALLING' : 'STABLE';
+  const trendConfig = {
+    RISING:  { icon: <ArrowUpRight size={20} />, label: '📈 Prices Expected to Rise',  bg: 'bg-red-50 border-red-200', text: 'text-red-800', desc: `7-day forecast shows a ${Math.abs(pct7).toFixed(1)}% increase. Monitor closely for sustained upward trend.` },
+    FALLING: { icon: <ArrowDownRight size={20} />, label: '📉 Prices Expected to Fall', bg: 'bg-green-50 border-green-200', text: 'text-green-800', desc: `7-day forecast shows a ${Math.abs(pct7).toFixed(1)}% decrease. Consider procurement opportunities.` },
+    STABLE:  { icon: <Minus size={20} />, label: '➡️ Prices Expected to Remain Stable', bg: 'bg-blue-50 border-blue-200', text: 'text-blue-800', desc: `7-day forecast shows minimal change (${Math.abs(pct7).toFixed(1)}%). Markets operating within normal bounds.` },
+  };
+  const trend = trendConfig[trendDirection];
 
   const combinedChart = [...(d.historicalData || []), ...(d.forecastData || [])];
 
@@ -190,15 +232,26 @@ const Dashboard = ({ data, selectedCommodity = 'onion' }) => {
       {/* ── HEADER ── */}
       <div>
         <h1 className="text-3xl font-black text-gray-900 tracking-tight leading-tight">National Price Intelligence & DSS</h1>
-        <p className="text-sm font-semibold text-[#0A3A2A] mt-1">AI-Enabled Commodity Price Forecasting & Buffer Stock Intervention Sandbox</p>
+        <p className="text-sm font-semibold text-[#0A3A2A] mt-1">AI-Enabled Commodity Price Forecasting & Government Decision Support</p>
         <p className="text-xs text-gray-400 mt-0.5 font-medium">Government of India — Department of Consumer Affairs &nbsp;|&nbsp; Market: {d.systemStatus?.market} ({d.systemStatus?.state})</p>
       </div>
 
       {/* ══════════════════════════════════════════════════════════════════════
-          1. EXECUTIVE SUMMARY
+          1. PRICE TREND OUTLOOK (NEW — prominent banner)
       ══════════════════════════════════════════════════════════════════════ */}
-      <Section title="1. Executive Summary: Market Overview">
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
+      <div className={`${trend.bg} border-2 rounded-xl p-5 flex items-center gap-4`}>
+        <div className={`${trend.text} flex-shrink-0`}>{trend.icon}</div>
+        <div>
+          <p className={`text-lg font-black ${trend.text}`}>{trend.label}</p>
+          <p className="text-sm text-gray-700 font-medium mt-0.5">{trend.desc}</p>
+        </div>
+      </div>
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          2. EXECUTIVE SUMMARY (KPI cards — no System Status)
+      ══════════════════════════════════════════════════════════════════════ */}
+      <Section title="Current Price & Multi-Horizon Forecast">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
           {/* Current Price */}
           <KpiCard label="Current Wholesale Price">
             <p className="text-4xl font-black text-gray-900 leading-none">{formatINR(d.kpiMetrics.currentPrice?.value)}</p>
@@ -209,49 +262,36 @@ const Dashboard = ({ data, selectedCommodity = 'onion' }) => {
           <KpiCard label="7-Day Forecast">
             <p className="text-4xl font-black text-gray-900 leading-none">{formatINR(d.kpiMetrics.forecast7Day?.value)}</p>
             <div className="mt-1">{pctBadge(d.kpiMetrics.forecast7Day?.changePct)}</div>
+            <p className="text-[10px] text-gray-400 mt-1 font-medium">by {d.kpiMetrics.forecast7Day?.date}</p>
           </KpiCard>
 
           {/* 14-Day */}
           <KpiCard label="14-Day Forecast">
             <p className="text-4xl font-black text-gray-900 leading-none">{formatINR(d.kpiMetrics.forecast14Day?.value)}</p>
             <div className="mt-1">{pctBadge(d.kpiMetrics.forecast14Day?.changePct)}</div>
+            <p className="text-[10px] text-gray-400 mt-1 font-medium">by {d.kpiMetrics.forecast14Day?.date}</p>
           </KpiCard>
 
           {/* 30-Day */}
           <KpiCard label="30-Day Forecast">
             <p className="text-4xl font-black text-gray-900 leading-none">{formatINR(d.kpiMetrics.forecast30Day?.value)}</p>
             <div className="mt-1">{pctBadge(d.kpiMetrics.forecast30Day?.changePct)}</div>
+            <p className="text-[10px] text-gray-400 mt-1 font-medium">by {d.kpiMetrics.forecast30Day?.date}</p>
           </KpiCard>
-
-          {/* System Status */}
-          <div className="bg-[#0A3A2A] text-white rounded-xl p-5 flex flex-col justify-between">
-            <p className="text-[10px] font-bold text-green-300 uppercase tracking-widest mb-3">System Status</p>
-            <div className="space-y-2">
-              <Row label="Risk Level">
-                <span className={`font-black text-sm tracking-wider ${rl === 'LOW' ? 'text-green-400' : rl === 'MEDIUM' ? 'text-yellow-400' : 'text-red-400'}`}>{rl}</span>
-              </Row>
-              <Row label="Alert Status">
-                <span className="font-black text-sm text-white">{d.kpiMetrics.alertStatus === 'ALERT' ? '🚨 ALERT' : '🟢 NORMAL'}</span>
-              </Row>
-              <Row label="Decision Priority">
-                <span className="font-black text-sm text-white">{d.kpiMetrics.decisionPriority}</span>
-              </Row>
-            </div>
-          </div>
         </div>
       </Section>
 
       {/* ══════════════════════════════════════════════════════════════════════
-          2. PRICE TRAJECTORY
+          3. PRICE TRAJECTORY CHART
       ══════════════════════════════════════════════════════════════════════ */}
-      <Section title="2. Price Trajectory & Multi-Horizon Forecast">
+      <Section title="Price Trajectory & Forecast Visualization">
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
           <div className="flex justify-between items-center mb-6 flex-wrap gap-3">
-            <h3 className="font-bold text-gray-800">Wholesale Price Trajectory — Backtest Validation & Multi-Horizon Forecast</h3>
+            <h3 className="font-bold text-gray-800">Wholesale Price — Historical Trend & AI Forecast</h3>
             <div className="flex gap-5 flex-wrap">
               <Legend color="#3b82f6" label="Actual Historical Price" />
-              <Legend color="#16a34a" label="Model Backtest (In-Sample)" dashed />
-              <Legend color="#ef4444" label="Model Forecast (Future)" dashed />
+              <Legend color="#16a34a" label="Model Backtest (Validation)" dashed />
+              <Legend color="#ef4444" label="AI Forecast (Future)" dashed />
             </div>
           </div>
           <div className="h-80">
@@ -271,23 +311,22 @@ const Dashboard = ({ data, selectedCommodity = 'onion' }) => {
             </ResponsiveContainer>
           </div>
 
-          {/* Model Error Strip */}
-          <div className="mt-6 pt-5 border-t border-gray-100 grid grid-cols-4 gap-4 text-center">
-            <MapeCell label="7-Day MAPE"        value={`${d.modelErrors?.mape7}%`}  />
-            <MapeCell label="14-Day MAPE"       value={`${d.modelErrors?.mape14}%`} />
-            <MapeCell label="30-Day MAPE"       value={`${d.modelErrors?.mape30}%`} />
-            <MapeCell label="Supply Pressure Idx" value={d.modelErrors?.supplyPressureIdx?.toFixed(1)} accent />
+          {/* Model Accuracy Strip (renamed from MAPE) */}
+          <div className="mt-6 pt-5 border-t border-gray-100 grid grid-cols-3 gap-4 text-center">
+            <AccuracyCell label="7-Day Accuracy"  value={`${(100 - (d.modelErrors?.mape7 || 0)).toFixed(1)}%`} />
+            <AccuracyCell label="14-Day Accuracy" value={`${(100 - (d.modelErrors?.mape14 || 0)).toFixed(1)}%`} />
+            <AccuracyCell label="30-Day Accuracy" value={`${(100 - (d.modelErrors?.mape30 || 0)).toFixed(1)}%`} />
           </div>
         </div>
       </Section>
 
       {/* ══════════════════════════════════════════════════════════════════════
-          3 & 4. RISK + SHAP
+          4 & 5. RISK + WHAT'S DRIVING THIS FORECAST
       ══════════════════════════════════════════════════════════════════════ */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* 3. Early Warning */}
+        {/* 4. Risk & Early Warning */}
         <div>
-          <SectionTitle title="3. Early Warning & Risk Analysis" />
+          <SectionTitle title="Risk Assessment & Early Warning" />
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 h-full">
             <div className={`p-5 rounded-xl mb-5 border ${riskBg[rl]}`}>
               <div className="flex items-center gap-4">
@@ -297,12 +336,21 @@ const Dashboard = ({ data, selectedCommodity = 'onion' }) => {
                 <div>
                   <p className={`text-4xl font-black ${riskText[rl]} leading-none`}>{d.riskData?.score}</p>
                   <p className={`text-[11px] font-bold uppercase tracking-wider mt-1 ${riskText[rl]}`}>
-                    Score / 100 &nbsp;·&nbsp; {rl} RISK &nbsp;·&nbsp; Warning {d.riskData?.earlyWarning ? 'ACTIVE' : 'INACTIVE'}
+                    Score / 100 &nbsp;·&nbsp; {rl} RISK &nbsp;·&nbsp; Warning {d.riskData?.earlyWarning ? 'ACTIVE 🚨' : 'INACTIVE ✅'}
                   </p>
                 </div>
               </div>
             </div>
-            <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Core Risk Drivers:</h4>
+
+            {/* Risk Score Explanation */}
+            <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 mb-5 flex items-start gap-2">
+              <Info size={14} className="text-blue-500 flex-shrink-0 mt-0.5" />
+              <p className="text-[11px] text-blue-800 font-medium leading-relaxed">
+                <strong>How is this calculated?</strong> {RISK_SCORE_EXPLANATION}
+              </p>
+            </div>
+
+            <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">What's Contributing to This Risk Level:</h4>
             <ul className="space-y-3">
               {(d.riskData?.drivers || []).map((dr, i) => (
                 <li key={i} className="flex items-start text-sm font-medium text-gray-700">
@@ -314,17 +362,23 @@ const Dashboard = ({ data, selectedCommodity = 'onion' }) => {
           </div>
         </div>
 
-        {/* 4. SHAP Explainability */}
+        {/* 5. What's Driving This Forecast (renamed from SHAP) */}
         <div>
-          <SectionTitle title="4. Price Driver Explainability (SHAP)" />
+          <SectionTitle title="What's Driving This Forecast?" />
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 h-full flex flex-col">
-            <p className="text-[11px] text-gray-400 italic mb-5 font-medium">Local feature contribution relative to baseline. Does not imply physical causation.</p>
+            <div className="bg-amber-50 border border-amber-100 rounded-lg p-3 mb-5 flex items-start gap-2">
+              <Info size={14} className="text-amber-600 flex-shrink-0 mt-0.5" />
+              <p className="text-[11px] text-amber-800 font-medium leading-relaxed">
+                <strong>Reading this chart:</strong> Each bar shows how much a specific factor pushed the AI forecast <strong>up (green)</strong> or <strong>down (red)</strong> from the baseline.
+                Larger bars indicate stronger influence on the predicted price.
+              </p>
+            </div>
             <div className="flex-1 min-h-[220px]">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={d.shapDrivers} layout="vertical" margin={{ top: 0, right: 30, left: 0, bottom: 0 }}>
                   <XAxis type="number" hide />
                   <YAxis dataKey="name" type="category" width={140} tick={{ fontSize: 11, fill: '#4b5563', fontWeight: 600 }} axisLine={false} tickLine={false} />
-                  <Tooltip cursor={{ fill: '#f9fafb' }} contentStyle={{ borderRadius: '8px', fontSize: '12px', fontWeight: 600, border: 'none', boxShadow: '0 4px 6px -1px rgba(0,0,0,.1)' }} formatter={(v) => [`₹${v}`, 'Impact']} />
+                  <Tooltip cursor={{ fill: '#f9fafb' }} contentStyle={{ borderRadius: '8px', fontSize: '12px', fontWeight: 600, border: 'none', boxShadow: '0 4px 6px -1px rgba(0,0,0,.1)' }} formatter={(v) => [`₹${v}`, 'Price Impact']} />
                   <Bar dataKey="value" barSize={22} radius={[0, 4, 4, 0]}>
                     {(d.shapDrivers || []).map((e, i) => (
                       <Cell key={`c-${i}`} fill={e.direction === 'increase' ? '#16a34a' : '#ef4444'} />
@@ -334,33 +388,141 @@ const Dashboard = ({ data, selectedCommodity = 'onion' }) => {
               </ResponsiveContainer>
             </div>
             <div className="flex gap-4 mt-3 text-xs font-bold">
-              <span className="flex items-center gap-1.5"><div className="w-3 h-3 rounded-sm bg-green-600"></div>Price Upward Driver</span>
-              <span className="flex items-center gap-1.5"><div className="w-3 h-3 rounded-sm bg-red-500"></div>Price Downward Driver</span>
+              <span className="flex items-center gap-1.5"><div className="w-3 h-3 rounded-sm bg-green-600"></div>Pushes Price Up</span>
+              <span className="flex items-center gap-1.5"><div className="w-3 h-3 rounded-sm bg-red-500"></div>Pushes Price Down</span>
             </div>
           </div>
         </div>
       </div>
 
       {/* ══════════════════════════════════════════════════════════════════════
-          5. DECISION SUPPORT
+          5.5 WHAT-IF MARKET SIMULATOR
       ══════════════════════════════════════════════════════════════════════ */}
-      <Section title="5. Government Decision Support">
+      <Section title="Interactive What-If Market Simulator">
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-          <p className="text-[11px] text-gray-400 italic mb-6 font-medium">Advisory decision support for policy analysts. Not an autonomous action mandate.</p>
+          <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 mb-6 flex items-start gap-2">
+            <Settings2 size={16} className="text-blue-600 flex-shrink-0 mt-0.5" />
+            <p className="text-[11px] text-blue-800 font-medium leading-relaxed">
+              <strong>Simulation Mode:</strong> Adjust market parameters below to dynamically simulate price impacts. 
+              These are <em>hypothetical</em> scenarios using the active AI models and do not reflect observed reality.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            {/* Controls */}
+            <div className="lg:col-span-2 space-y-6">
+              <div>
+                <div className="flex justify-between text-sm mb-1">
+                  <span className="font-semibold text-gray-700">Market Arrivals (Tonnes)</span>
+                  <span className="font-bold text-gray-900">{simParams.arrivals}</span>
+                </div>
+                <input type="range" 
+                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                  min={d.sandboxDefaults?.arrivalsMin || 0} 
+                  max={d.sandboxDefaults?.arrivalsMax || 10000} 
+                  step="10"
+                  value={simParams.arrivals} 
+                  onChange={(e) => setSimParams({...simParams, arrivals: Number(e.target.value)})} 
+                />
+              </div>
+              <div>
+                <div className="flex justify-between text-sm mb-1">
+                  <span className="font-semibold text-gray-700">Diesel Price (₹/Litre)</span>
+                  <span className="font-bold text-gray-900">₹{simParams.diesel}</span>
+                </div>
+                <input type="range" 
+                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                  min="50" max="150" step="1"
+                  value={simParams.diesel} 
+                  onChange={(e) => setSimParams({...simParams, diesel: Number(e.target.value)})} 
+                />
+              </div>
+              <div>
+                <div className="flex justify-between text-sm mb-1">
+                  <span className="font-semibold text-gray-700">Rainfall (mm)</span>
+                  <span className="font-bold text-gray-900">{simParams.rain} mm</span>
+                </div>
+                <input type="range" 
+                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                  min="0" max="200" step="1"
+                  value={simParams.rain} 
+                  onChange={(e) => setSimParams({...simParams, rain: Number(e.target.value)})} 
+                />
+              </div>
+              <button 
+                onClick={handleSimulate}
+                disabled={simLoading || !hasInitializedSim}
+                className="px-5 py-2 bg-blue-600 text-white font-bold rounded-lg text-sm shadow-sm hover:bg-blue-700 disabled:opacity-50 transition-colors">
+                {simLoading ? 'Simulating...' : 'Run Simulation'}
+              </button>
+            </div>
+            
+            {/* Results */}
+            <div className="border border-gray-100 bg-gray-50 rounded-xl p-5 flex flex-col justify-center">
+              {simError ? (
+                <p className="text-red-500 font-bold text-sm text-center">⚠️ {simError}</p>
+              ) : simResult ? (
+                <div className="text-center">
+                  <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-1">Simulated 7-Day Forecast</p>
+                  <p className="text-4xl font-black text-blue-700 mb-2">₹{simResult.simulatedForecast}</p>
+                  <p className={`text-sm font-bold ${simResult.impactPct > 0 ? 'text-red-600' : 'text-green-600'} mb-4`}>
+                    {simResult.impactPct > 0 ? '▲' : '▼'} {Math.abs(simResult.impactPct).toFixed(1)}% (₹{Math.abs(simResult.impact)}) from baseline
+                  </p>
+                  <div className="bg-white border border-gray-200 p-3 rounded text-left shadow-sm">
+                    <p className="text-xs font-bold text-gray-700 mb-1">AI Suggestion:</p>
+                    <p className="text-xs text-gray-600 font-medium leading-relaxed">{simResult.suggestion}</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center text-gray-400">
+                  <Settings2 size={32} className="mx-auto mb-2 opacity-50" />
+                  <p className="text-sm font-medium">Adjust parameters and run simulation to see impacts.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </Section>
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          6. GOVERNMENT DECISION SUPPORT
+      ══════════════════════════════════════════════════════════════════════ */}
+      <Section title="Government Decision Support">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+          <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-3 mb-6 flex items-start gap-2">
+            <Info size={14} className="text-indigo-500 flex-shrink-0 mt-0.5" />
+            <p className="text-[11px] text-indigo-800 font-medium leading-relaxed">
+              <strong>These recommendations are dynamically generated</strong> by the AI model based on current forecast, risk score, price trend, and market evidence — they are not static rules.
+            </p>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             {/* Left: Assessment */}
             <div>
               <div className="flex items-center gap-3 mb-4">
                 <Cpu size={18} className="text-blue-600 flex-shrink-0" />
-                <h4 className="font-bold text-gray-900">Model Assessment</h4>
+                <h4 className="font-bold text-gray-900">AI-Generated Assessment</h4>
               </div>
               <div className={`${riskBg[rl]} border rounded-xl p-4 mb-4`}>
                 <p className={`text-xs font-bold uppercase tracking-wider mb-1 ${riskText[rl]}`}>Recommendation</p>
                 <p className={`text-lg font-black ${riskText[rl]} mb-2`}>{d.decisionSupport?.recommendation}</p>
                 <p className="text-sm font-medium text-gray-700 leading-relaxed">{d.decisionSupport?.summary}</p>
               </div>
+
+              {/* Decision Priority with explanation */}
+              <div className="bg-gray-50 border border-gray-100 p-4 rounded-xl mb-4">
+                <div className="flex items-center justify-between mb-2">
+                  <h5 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Decision Priority</h5>
+                  <span className={`text-xs uppercase font-black px-2 py-1 rounded border ${riskBadge[d.kpiMetrics.decisionPriority || rl]}`}>
+                    {d.kpiMetrics.decisionPriority || rl}
+                  </span>
+                </div>
+                <p className="text-[11px] text-gray-600 font-medium leading-relaxed">
+                  {PRIORITY_EXPLANATIONS[d.kpiMetrics.decisionPriority || rl]}
+                </p>
+              </div>
+
               <div className="bg-gray-50 border border-gray-100 p-4 rounded-xl">
-                <h5 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Action Directives</h5>
+                <h5 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Recommended Actions</h5>
                 <ul className="space-y-1.5">
                   {(d.decisionSupport?.actions || []).map((a, i) => (
                     <li key={i} className="flex items-start text-sm text-gray-700 font-medium">
@@ -371,7 +533,7 @@ const Dashboard = ({ data, selectedCommodity = 'onion' }) => {
               </div>
             </div>
 
-            {/* Right: Checklists */}
+            {/* Right: Verification Checklists */}
             <div>
               <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
                 <div className="flex items-center gap-3">
@@ -382,6 +544,15 @@ const Dashboard = ({ data, selectedCommodity = 'onion' }) => {
                   Confidence: {d.decisionSupport?.confidence}
                 </span>
               </div>
+
+              {/* Explanation of what checkpoints mean */}
+              <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-3 mb-4 flex items-start gap-2">
+                <Info size={14} className="text-emerald-600 flex-shrink-0 mt-0.5" />
+                <p className="text-[11px] text-emerald-800 font-medium leading-relaxed">
+                  <strong>Before taking real-world action</strong>, a government analyst should verify each of these checkpoints to ensure the AI's recommendation is grounded in the latest on-ground reality.
+                </p>
+              </div>
+
               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Verify Before Action:</p>
               <ul className="space-y-3 mb-6">
                 {(d.decisionSupport?.checklists || []).map((c, i) => (
@@ -391,43 +562,45 @@ const Dashboard = ({ data, selectedCommodity = 'onion' }) => {
                   </li>
                 ))}
               </ul>
-              <button className="w-full bg-[#0A3A2A] hover:bg-green-900 text-white py-3 rounded-xl text-sm font-bold transition shadow-sm flex justify-center items-center gap-2">
-                View Full Evidence Log <MoveRight size={16} />
-              </button>
             </div>
           </div>
         </div>
       </Section>
 
       {/* ══════════════════════════════════════════════════════════════════════
-          6 & 7. MODEL RELIABILITY + POLICY SANDBOX
+          7. MODEL ACCURACY & FEATURE IMPORTANCE
       ══════════════════════════════════════════════════════════════════════ */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* 6. Model Reliability */}
-        <div>
-          <SectionTitle title="6. Model Reliability & Transparency" />
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 h-full flex flex-col gap-5">
+      <Section title="Model Performance & Accuracy">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            {/* Left: Accuracy metrics */}
             <div>
-              <div className="flex items-center gap-2 mb-4">
-                <Server size={16} className="text-purple-600" />
-                <h4 className="font-bold text-gray-900 text-sm">Model Error Margins (MAPE)</h4>
+              <h4 className="font-bold text-gray-900 text-sm mb-4">Forecast Accuracy by Horizon</h4>
+              <div className="grid grid-cols-3 gap-3 mb-5">
+                <AccuracyCard label="7-Day" value={`${(100 - (d.modelErrors?.mape7 || 0)).toFixed(1)}%`} isActive={selectedHorizon === '7d'} onClick={() => setSelectedHorizon('7d')} />
+                <AccuracyCard label="14-Day" value={`${(100 - (d.modelErrors?.mape14 || 0)).toFixed(1)}%`} isActive={selectedHorizon === '14d'} onClick={() => setSelectedHorizon('14d')} />
+                <AccuracyCard label="30-Day" value={`${(100 - (d.modelErrors?.mape30 || 0)).toFixed(1)}%`} isActive={selectedHorizon === '30d'} onClick={() => setSelectedHorizon('30d')} />
               </div>
-              <div className="grid grid-cols-3 gap-3">
-                <MapeCard label="7-Day" value={`${d.modelErrors?.mape7}%`} />
-                <MapeCard label="14-Day" value={`${d.modelErrors?.mape14}%`} />
-                <MapeCard label="30-Day" value={`${d.modelErrors?.mape30}%`} />
+
+              <div className="bg-purple-50 border border-purple-100 p-4 rounded-xl text-xs font-medium text-purple-900 leading-relaxed">
+                <strong>{selectedHorizon === '7d' ? '7-Day' : selectedHorizon === '14d' ? '14-Day' : '30-Day'} Confidence: {d.modelErrors?.[`conf${selectedHorizon.replace('d','')}`]}</strong><br/>
+                {d.modelErrors?.[`conf${selectedHorizon.replace('d','')}`]?.includes("LOW") ? 
+                  "This long-horizon forecast should be treated as a directional signal rather than a precise price estimate because historical validation error is high." : 
+                 d.modelErrors?.[`conf${selectedHorizon.replace('d','')}`]?.includes("MEDIUM") ? 
+                  "This forecast has moderate historical error and should be interpreted with caution." : 
+                  "While historical validation error is low, no forecast is guaranteed to be perfectly accurate."}
               </div>
             </div>
 
-            {/* Feature importance bar chart */}
+            {/* Right: Feature importance */}
             <div>
-              <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Top Feature Importances</h4>
-              <div className="h-36">
+              <h4 className="font-bold text-gray-900 text-sm mb-4">Key Factors Influencing Price Predictions</h4>
+              <div className="h-40">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart layout="vertical" data={d.priceDrivers} margin={{ top: 0, right: 20, left: 0, bottom: 0 }} barSize={10}>
+                  <BarChart layout="vertical" data={d.priceDrivers} margin={{ top: 0, right: 20, left: 0, bottom: 0 }} barSize={12}>
                     <XAxis type="number" hide />
                     <YAxis dataKey="name" type="category" width={120} tick={{ fontSize: 10, fill: '#4b5563', fontWeight: 600 }} axisLine={false} tickLine={false} />
-                    <Tooltip cursor={{ fill: '#f9fafb' }} contentStyle={{ borderRadius: '8px', border: 'none', fontSize: 11, fontWeight: 600, boxShadow: '0 2px 4px rgba(0,0,0,.1)' }} />
+                    <Tooltip cursor={{ fill: '#f9fafb' }} contentStyle={{ borderRadius: '8px', border: 'none', fontSize: 11, fontWeight: 600, boxShadow: '0 2px 4px rgba(0,0,0,.1)' }} formatter={(v) => [`${v}%`, 'Importance']} />
                     <Bar dataKey="value" radius={[0, 4, 4, 0]}>
                       {(d.priceDrivers || []).map((_, i) => (
                         <Cell key={i} fill={i === 0 ? '#0A3A2A' : '#22c55e'} opacity={1 - i * 0.14} />
@@ -436,100 +609,20 @@ const Dashboard = ({ data, selectedCommodity = 'onion' }) => {
                   </BarChart>
                 </ResponsiveContainer>
               </div>
-            </div>
-
-            <div className="bg-purple-50 border border-purple-100 p-4 rounded-xl text-xs font-medium text-purple-900 leading-relaxed">
-              <strong>Interpretation:</strong> Longer-horizon forecasts carry higher error. Use 30-day forecasts as directional signals, not precise price targets.
-            </div>
-          </div>
-        </div>
-
-        {/* 7. Policy Sandbox */}
-        <div>
-          <SectionTitle title="7. Policy Intervention Sandbox" />
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 h-full flex flex-col justify-between">
-            <div>
-              <div className="flex items-center gap-2 mb-5">
-                <Sliders size={16} className="text-orange-600" />
-                <h4 className="font-bold text-gray-900 text-sm">Adjust Supply / Market Parameters</h4>
-              </div>
-              <div className="space-y-6">
-                <SliderField
-                  label="Simulate Market Arrivals (Tonnes)"
-                  value={sandbox.arrivals}
-                  min={d.sandboxDefaults.arrivalsMin}
-                  max={d.sandboxDefaults.arrivalsMax}
-                  step={100}
-                  onChange={(v) => setSandbox({ ...sandbox, arrivals: v })}
-                  display={`${sandbox.arrivals} T`}
-                />
-                <SliderField
-                  label="Simulate Diesel Price Shock (₹/L)"
-                  value={sandbox.diesel}
-                  min={70}
-                  max={110}
-                  step={0.5}
-                  onChange={(v) => setSandbox({ ...sandbox, diesel: v })}
-                  display={`₹${sandbox.diesel}`}
-                />
-                <SliderField
-                  label="Simulate Rainfall Deficit / Excess (mm)"
-                  value={sandbox.rain}
-                  min={0}
-                  max={100}
-                  step={1}
-                  onChange={(v) => setSandbox({ ...sandbox, rain: v })}
-                  display={`${sandbox.rain} mm`}
-                />
-              </div>
-            </div>
-
-            {/* Simulation Result */}
-            <div className="mt-8 bg-gray-50 border border-gray-200 p-5 rounded-xl text-center">
-              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1">Simulated 7-Day Forecast Price</p>
-              <p className="text-4xl font-black text-gray-900 mb-2">{formatINR(simPrice)}</p>
-              {simImpact > 5 ? (
-                <p className="text-sm font-bold text-green-600">💡 Intervention drops forecast by {formatINR(simImpact)}</p>
-              ) : simImpact < -5 ? (
-                <p className="text-sm font-bold text-red-600">⚠️ Supply constraints push forecast up by {formatINR(Math.abs(simImpact))}</p>
-              ) : (
-                <p className="text-sm font-bold text-gray-500">No significant impact simulated.</p>
-              )}
-              {simPct > 10 && <p className="text-xs text-red-700 font-bold mt-2">URGENT: Consider evaluating buffer stock release.</p>}
-              {simPct > 5 && simPct <= 10 && <p className="text-xs text-orange-700 font-bold mt-2">MONITOR: Consider partial buffer stock release or import options.</p>}
-              {simPct < -10 && <p className="text-xs text-green-700 font-bold mt-2">BUY: Assess procurement readiness for buffer stock build-up.</p>}
+              <p className="text-[11px] text-gray-500 font-medium mt-3 leading-relaxed">
+                This chart shows how much importance the AI model places on each factor when making price predictions. Higher values = stronger influence.
+              </p>
             </div>
           </div>
         </div>
-      </div>
+      </Section>
 
-      {/* ══════════════════════════════════════════════════════════════════════
-          8. SYSTEM ARCHITECTURE
-      ══════════════════════════════════════════════════════════════════════ */}
-      <div className="pb-10">
-        <SectionTitle title="8. System Architecture Flow" />
-        <div className="bg-[#0A3A2A] text-green-300 rounded-xl p-6 font-mono text-[11px] leading-loose shadow-sm overflow-x-auto whitespace-pre">
-{`Data Layer (AGMARKNET · OpenMeteo · Diesel Price API)
-       ↓
-Feature Engineering (Lags, Rolling Averages, Volatility Metrics)
-       ↓
-Multi-Horizon Forecasting Engine (7D · 14D · 30D XGBoost Regressors)
-       ↓
-Risk & Early-Warning Engine (Composite Score · Arrival Pressure · Volatility)
-       ↓
-SHAP Explainability Engine (Local Feature Contribution Mapping)
-       ↓
-Decision-Support Engine (Advisory Policies · Verification Checklists · DSS)
-       ↓
-Policy Sandbox (What-If Simulation · Buffer Stock Impact Analysis)`}
-        </div>
-        <div className="mt-4 text-xs text-gray-400 flex gap-6 flex-wrap font-medium">
-          <span>📡 Data Source: {d.footerData?.dataSource}</span>
-          <span>📅 Last Update: {d.footerData?.lastUpdate}</span>
-          <span>✅ Data Quality: {d.footerData?.dataQuality}%</span>
-          <span>📊 Total Records: {d.footerData?.totalRecords?.toLocaleString()}</span>
-          <span>🤖 Model: {d.footerData?.modelUsed}</span>
-        </div>
+      {/* ── DATA FOOTER ── */}
+      <div className="pb-6 text-xs text-gray-400 flex gap-6 flex-wrap font-medium">
+        <span>📡 Data Source: {d.footerData?.dataSource}</span>
+        <span>📅 Last Update: {d.footerData?.lastUpdate}</span>
+        <span>✅ Data Quality: {d.footerData?.dataQuality}%</span>
+        <span>📊 Total Records: {d.footerData?.totalRecords?.toLocaleString()}</span>
       </div>
     </div>
   );
@@ -554,13 +647,6 @@ const KpiCard = ({ label, children }) => (
   </div>
 );
 
-const Row = ({ label, children }) => (
-  <div className="flex items-center justify-between gap-2">
-    <span className="text-[10px] text-green-200 uppercase tracking-wider font-bold">{label}:</span>
-    {children}
-  </div>
-);
-
 const Legend = ({ color, label, dashed }) => (
   <span className="flex items-center gap-1.5 text-xs font-bold text-gray-600">
     <span style={{ backgroundColor: dashed ? 'transparent' : color, borderTop: dashed ? `2px dashed ${color}` : 'none', display: 'inline-block', width: 14, height: dashed ? 0 : 12, borderRadius: 2 }}></span>
@@ -568,31 +654,17 @@ const Legend = ({ color, label, dashed }) => (
   </span>
 );
 
-const MapeCell = ({ label, value, accent }) => (
+const AccuracyCell = ({ label, value }) => (
   <div className="text-center">
     <p className="text-[9px] text-gray-500 uppercase tracking-widest font-bold mb-1">{label}</p>
-    <p className={`text-lg font-black ${accent ? 'text-amber-600' : 'text-gray-900'}`}>{value}</p>
+    <p className="text-lg font-black text-gray-900">{value}</p>
   </div>
 );
 
-const MapeCard = ({ label, value }) => (
-  <div className="bg-gray-50 border border-gray-100 rounded-lg p-3 text-center">
-    <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">{label}</p>
-    <p className="text-xl font-black text-gray-900">{value}</p>
-  </div>
-);
-
-const SliderField = ({ label, value, min, max, step, onChange, display }) => (
-  <div>
-    <div className="flex justify-between mb-2">
-      <label className="text-xs font-bold text-gray-600 uppercase tracking-wide">{label}</label>
-      <span className="text-xs font-bold text-orange-700 bg-orange-50 px-2 py-0.5 rounded border border-orange-200">{display}</span>
-    </div>
-    <input
-      type="range" min={min} max={max} step={step} value={value}
-      onChange={(e) => onChange(parseFloat(e.target.value))}
-      className="w-full h-2 bg-gray-200 rounded-full appearance-none cursor-pointer accent-orange-500"
-    />
+const AccuracyCard = ({ label, value, isActive, onClick }) => (
+  <div onClick={onClick} className={`cursor-pointer border rounded-lg p-3 text-center transition-all ${isActive ? 'bg-purple-50 border-purple-200 shadow-sm' : 'bg-gray-50 border-gray-100 hover:bg-gray-100'}`}>
+    <p className={`text-[9px] font-black uppercase tracking-widest mb-1 ${isActive ? 'text-purple-600' : 'text-gray-400'}`}>{label}</p>
+    <p className={`text-xl font-black ${isActive ? 'text-purple-900' : 'text-gray-900'}`}>{value}</p>
   </div>
 );
 

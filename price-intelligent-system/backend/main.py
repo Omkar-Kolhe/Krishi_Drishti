@@ -1,11 +1,13 @@
 # pyrefly: ignore [missing-import]
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import joblib
 import pandas as pd
 import numpy as np
 import os
 import datetime
+import shap
+import json
 # pyrefly: ignore [missing-import]
 from pydantic import BaseModel
 
@@ -36,7 +38,6 @@ COMMODITY_CONFIG = {
         "state":     "Maharashtra",
         "unit":      "quintal",
         "emoji":     "🧅",
-        "mape": {"7d": 15.47, "14d": 19.73, "30d": 36.55},
         "features": [
             'Temperature_C', 'Rainfall_mm', 'Arrivals_Tonnes', 'Diesel_Price_Rs',
             'Modal_Price', 'Price_Lag_1', 'Price_Lag_3', 'Price_Lag_7',
@@ -53,7 +54,6 @@ COMMODITY_CONFIG = {
         "state":     "Uttar Pradesh",
         "unit":      "quintal",
         "emoji":     "🥔",
-        "mape": {"7d": 16.19, "14d": 33.33, "30d": 67.30},
         "features": [
             'Temperature_C', 'Rainfall_mm', 'Arrivals_Tonnes', 'Diesel_Price_Rs',
             'Modal_Price', 'Price_Lag_1', 'Price_Lag_2', 'Price_Lag_3', 'Price_Lag_4',
@@ -72,7 +72,6 @@ COMMODITY_CONFIG = {
         "state":     "Maharashtra",
         "unit":      "quintal",
         "emoji":     "🫘",
-        "mape": {"7d": 7.30, "14d": 9.17, "30d": 13.32},
         "features": [
             'Temperature_C', 'Rainfall_mm', 'Arrivals_Tonnes', 'Diesel_Price_Rs',
             'Modal_Price', 'Price_Lag_1', 'Price_Lag_2', 'Price_Lag_3', 'Price_Lag_4',
@@ -86,6 +85,14 @@ COMMODITY_CONFIG = {
 
 # In-memory cache so we don't reload from disk on every request
 _cache = {"models": {}, "data": {}}
+
+# Load metrics.json
+try:
+    with open(os.path.join(MODELS_DIR, "metrics.json"), "r") as f:
+        _MODEL_METRICS = json.load(f)
+except Exception as e:
+    print(f"[WARN] Failed to load metrics.json: {e}")
+    _MODEL_METRICS = {}
 
 
 # ---------------------------------------------------------------------------
@@ -223,18 +230,58 @@ def _compute_risk(df_clean: pd.DataFrame, current_price: float, forecast_7d: flo
 
 
 # ---------------------------------------------------------------------------
-# SHAP-STYLE DRIVER EXTRACTION (feature importance approximation)
+# SHAP LOCAL EXPLANATIONS (True feature contribution extraction)
 # ---------------------------------------------------------------------------
-def _compute_shap_drivers(model, features: list, X_row: pd.DataFrame) -> list:
+_shap_explainers = {}
+
+def _compute_shap_drivers(model, model_name: str, features: list, X_row: pd.DataFrame) -> list:
     try:
-        importances = model.feature_importances_
-        sorted_idx = np.argsort(importances)[::-1][:5]
+        import traceback
+        # Initialize or retrieve cached explainer
+        if model_name not in _shap_explainers:
+            _shap_explainers[model_name] = shap.TreeExplainer(model)
+        
+        explainer = _shap_explainers[model_name]
+        shap_values = explainer.shap_values(X_row)
+        
+        # Handle cases where shap returns a list (e.g., multi-class) or 2D array
+        if isinstance(shap_values, list):
+            vals = shap_values[0][0]
+        elif len(shap_values.shape) == 2:
+            vals = shap_values[0]
+        else:
+            vals = shap_values
+            
+        # SHAP Additivity Verification
+        expected_value = explainer.expected_value
+        if isinstance(expected_value, (list, np.ndarray)):
+            expected_value = expected_value[0]
+            
+        expected_val = float(expected_value)
+        sum_shap = float(np.sum(vals))
+        
+        # Model prediction
+        prediction_arr = model.predict(X_row)
+        prediction = float(prediction_arr[0] if isinstance(prediction_arr, np.ndarray) else prediction_arr)
+        
+        # Check if expected_value + sum(shap_values) ≈ model prediction
+        if abs((expected_val + sum_shap) - prediction) > 1e-2:
+            raise ValueError(f"SHAP additivity verification failed for {model_name}. Expected+SHAP: {expected_val + sum_shap}, Pred: {prediction}")
+
+        # Pair feature names with their local SHAP value
+        feature_contributions = []
+        for i, feat_name in enumerate(features):
+            val = float(vals[i])
+            feature_contributions.append((feat_name, val))
+            
+        # Sort by absolute impact (highest magnitude first)
+        feature_contributions.sort(key=lambda x: abs(x[1]), reverse=True)
+        
+        # Take the top 5 most impactful features
+        top_drivers = feature_contributions[:5]
+        
         drivers = []
-        for idx in sorted_idx:
-            feat_name = features[idx]
-            importance = float(importances[idx])
-            raw_val = float(X_row[feat_name].values[0])
-            contrib = round(importance * raw_val, 2)
+        for feat_name, shap_val in top_drivers:
             # Humanize feature name
             human = (feat_name
                      .replace('Price_Lag_', 'Price ')
@@ -245,50 +292,77 @@ def _compute_shap_drivers(model, features: list, X_row: pd.DataFrame) -> list:
                      .replace('Diesel Price Rs', 'Diesel Price')
                      .replace('Modal Price', 'Modal Price'))
             human = human + " Days Ago" if feat_name.startswith("Price_Lag") else human
+            
             drivers.append({
                 "name":      human,
-                "value":     contrib,
-                "direction": "increase" if contrib > 0 else "decrease",
+                "value":     round(shap_val, 2),
+                "direction": "increase" if shap_val > 0 else "decrease",
             })
         return drivers
-    except Exception:
-        return [
-            {"name": "Price Momentum",  "value":  320.0, "direction": "increase"},
-            {"name": "Market Arrivals", "value":  -80.0, "direction": "decrease"},
-            {"name": "Seasonality",     "value":   50.0, "direction": "increase"},
-        ]
+    except Exception as e:
+        print(f"[SHAP ERROR] Model: {model_name}. Exception: {e}")
+        # Return safe explainability-unavailable state instead of crashing or fabricating mock data
+        return []
 
 
 # ---------------------------------------------------------------------------
 # DECISION SUPPORT
 # ---------------------------------------------------------------------------
-def _decision_support(commodity_name: str, current_price: float, forecast_7d: float,
-                      risk_level: str, pct_7d: float) -> dict:
-    if pct_7d > 15:
-        rec   = "URGENT INTERVENTION"
+def _decision_support(commodity_name: str, current_price: float,
+                      pct_7d: float, pct_14d: float, pct_30d: float,
+                      risk_level: str, risk_score: float,
+                      arrival_pressure: float) -> dict:
+    
+    # 1. HIGH/CRITICAL RISK + significant upward forecast -> elevated/urgent advisory review
+    if pct_7d > 10 and risk_level in ["URGENT", "HIGH"]:
+        rec   = "URGENT INTERVENTION REVIEW"
         prio  = "URGENT"
-        summary = f"{commodity_name} shows critical price spike risk. Forecast indicates {pct_7d:.1f}% rise."
-        actions = ["Evaluate immediate buffer stock release.", "Issue market advisory to traders.", "Coordinate with state governments on emergency procurement."]
+        summary = f"{commodity_name} shows critical price spike risk coupled with high vulnerability. Forecast indicates {pct_7d:.1f}% short-term rise."
+        actions = ["Evaluate immediate buffer stock release readiness.", "Assess market advisory to traders.", "Coordinate with state governments on procurement interventions."]
         checklists = ["Verify physical buffer stock availability.", "Confirm logistics capacity for rapid release.", "Cross-check data with NAFED/NCCF stocks."]
         confidence = "HIGH"
-    elif pct_7d > 8:
-        rec   = "INTERVENTION WATCH"
+
+    # 3. Upward 7D + upward 14D + upward 30D (Persistent upward pressure)
+    elif pct_7d > 8 and pct_14d > 8 and pct_30d > 8:
+        rec   = "PERSISTENT UPWARD PRESSURE"
         prio  = "HIGH"
-        summary = f"{commodity_name} price trending upward significantly. Partial intervention may be warranted."
-        actions = ["Prepare buffer stock release plan.", "Monitor market arrivals daily.", "Review import options if needed."]
-        checklists = ["Confirm arrival data from AGMARKNET.", "Check seasonal demand patterns.", "Assess retail price margins."]
+        summary = f"{commodity_name} indicates sustained price increases across all horizons. Stronger intervention review may be appropriate."
+        actions = ["Consider reviewing buffer stock release plan.", "Monitor market arrivals daily.", "Assess import options if needed."]
+        checklists = ["Confirm arrival data from AGMARKNET.", "Check seasonal demand patterns.", "Verify retail price margins."]
         confidence = "HIGH"
-    elif pct_7d < -15:
-        rec   = "PROCUREMENT OPPORTUNITY"
+
+    # 4. Upward 7D but declining 30D forecast (Short-term spike)
+    elif pct_7d > 10 and pct_30d < 0:
+        rec   = "SHORT-TERM VOLATILITY"
         prio  = "MEDIUM"
-        summary = f"{commodity_name} prices declining sharply. Consider procurement for buffer stock build-up."
-        actions = ["Assess procurement readiness for buffer stock.", "Evaluate storage capacity at target nodes."]
+        summary = f"Short-term spike of {pct_7d:.1f}% detected for {commodity_name}, but 30-day outlook is declining. Evaluate deferring major interventions."
+        actions = ["Investigate underlying causes of short-term volatility.", "Monitor closely before initiating buffer release.", "Verify incoming supply shipments."]
+        checklists = ["Verify weather anomalies causing temporary disruption.", "Confirm incoming regional supply data."]
+        confidence = "MEDIUM"
+
+    # 2. Large upward 7D forecast but LOW risk
+    elif pct_7d > 10 and risk_level == "LOW":
+        rec   = "ENHANCED MONITORING"
+        prio  = "MEDIUM"
+        summary = f"Forecast shows short-term {pct_7d:.1f}% rise, but composite risk is LOW. Investigate market signals before major action."
+        actions = ["Investigate local supply constraints.", "Monitor daily wholesale prices closely.", "Assess validity of forecast drivers."]
+        checklists = ["Verify local transportation bottlenecks.", "Check for regional holidays affecting arrivals."]
+        confidence = "MEDIUM"
+
+    # 5 & 6. Falling price + appropriate supply/procurement signal (or High arrival pressure)
+    elif pct_7d < -10 or (arrival_pressure > 20 and pct_7d < 0):
+        rec   = "PROCUREMENT REVIEW"
+        prio  = "MEDIUM"
+        summary = f"{commodity_name} prices are declining with favorable supply indicators. Consider reviewing procurement opportunities."
+        actions = ["Assess procurement readiness for buffer stock.", "Evaluate storage capacity at target nodes.", "Investigate supply-chain bottlenecks if prices drop too fast."]
         checklists = ["Verify quality standards before procurement.", "Check cold chain availability.", "Assess farmer distress signals."]
         confidence = "MEDIUM"
+
+    # 7. LOW risk + stable forecasts -> routine monitoring
     else:
         rec   = "ROUTINE MONITORING"
         prio  = "LOW"
-        summary = f"{commodity_name} shows low price risk over the 7-day horizon. Markets are within normal bounds."
+        summary = f"{commodity_name} shows low price risk and stable outlooks. Markets are operating within normal bounds."
         actions = ["Continue routine market monitoring.", "Verify local and national retail price margins."]
         checklists = ["Update weekly market status report.", "Monitor for early-warning threshold breaches."]
         confidence = "HIGH"
@@ -377,10 +451,19 @@ def get_dashboard_data(commodity: str = Query("onion")):
 
     # ---- SHAP drivers ----
     primary_model = _load_model(commodity, "model_7d")
-    shap_drivers = _compute_shap_drivers(primary_model, config["features"], X_latest) if primary_model else []
+    shap_drivers = _compute_shap_drivers(primary_model, f"{commodity}_7d", config["features"], X_latest) if primary_model else []
 
     # ---- Decision support ----
-    dss = _decision_support(config["market"], current_price, p7, risk["level"], pct7)
+    dss = _decision_support(
+        commodity_name=config["market"],
+        current_price=current_price,
+        pct_7d=pct7,
+        pct_14d=pct14,
+        pct_30d=pct30,
+        risk_level=risk["level"],
+        risk_score=risk["score"],
+        arrival_pressure=risk["arrivalPressure"]
+    )
 
     # ---- Historical chart data: real model backtest on last 90 days ----
     # Run the 7d model on every row in the last 90 days to get model's predicted
@@ -536,10 +619,23 @@ def get_dashboard_data(commodity: str = Query("onion")):
         "shapDrivers": shap_drivers,
 
         # Model reliability
+        metrics = _MODEL_METRICS.get(commodity, {})
+        mape7 = metrics.get("7d", 15.0)
+        mape14 = metrics.get("14d", 15.0)
+        mape30 = metrics.get("30d", 15.0)
+
+        def get_conf(m):
+            if m < 30: return "HIGH"
+            elif m <= 50: return "MEDIUM"
+            else: return "LOW"
+
         "modelErrors": {
-            "mape7":           config["mape"]["7d"],
-            "mape14":          config["mape"]["14d"],
-            "mape30":          config["mape"]["30d"],
+            "mape7":           mape7,
+            "mape14":          mape14,
+            "mape30":          mape30,
+            "conf7":           get_conf(mape7),
+            "conf14":          get_conf(mape14),
+            "conf30":          get_conf(mape30),
             "supplyPressureIdx": supply_pressure_idx,
         },
 

@@ -36,7 +36,7 @@ function App() {
     <div className="flex min-h-screen bg-krishi-bg font-sans">
       <Sidebar />
       <div className="flex-1 ml-64 flex flex-col h-screen overflow-hidden">
-        <TopBar selectedCommodity={selectedCommodity} onCommodityChange={setSelectedCommodity} />
+        <TopBar selectedCommodity={selectedCommodity} onCommodityChange={setSelectedCommodity} dashboardData={dashboardData} />
         <main className="flex-1 overflow-y-auto">
           {loading ? (
              <div className="p-8 flex flex-col items-center justify-center h-full">
